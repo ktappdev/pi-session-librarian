@@ -1,7 +1,8 @@
-import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { SessionMetrics, SessionScore } from "./types.js";
 
-export function computeScore(entries: SessionEntry[]): SessionScore {
+export type SessionEntryLike = any;
+
+export function computeScore(entries: SessionEntryLike[]): SessionScore {
   const metrics = computeMetrics(entries);
   const tags = new Set<string>();
   let score = 0;
@@ -68,7 +69,7 @@ export function computeScore(entries: SessionEntry[]): SessionScore {
   };
 }
 
-function computeMetrics(entries: SessionEntry[]): SessionMetrics {
+function computeMetrics(entries: SessionEntryLike[]): SessionMetrics {
   const metrics: SessionMetrics = {
     decisions: 0,
     bugfixes: 0,
@@ -133,7 +134,7 @@ function computeMetrics(entries: SessionEntry[]): SessionMetrics {
   return metrics;
 }
 
-export function extractFiles(entries: SessionEntry[]): Set<string> {
+export function extractFiles(entries: SessionEntryLike[]): Set<string> {
   const files = new Set<string>();
   for (const entry of entries) {
     if (entry.type !== "message") continue;
@@ -160,7 +161,7 @@ export function extractFiles(entries: SessionEntry[]): Set<string> {
   return files;
 }
 
-function detectedCreation(entries: SessionEntry[], hotFiles: string[]): boolean {
+function detectedCreation(entries: SessionEntryLike[], hotFiles: string[]): boolean {
   for (const entry of entries) {
     if (entry.type !== "message") continue;
     const msg = (entry as any).message;
@@ -178,7 +179,7 @@ function detectedCreation(entries: SessionEntry[], hotFiles: string[]): boolean 
   return false;
 }
 
-function detectedRefactoring(entries: SessionEntry[]): boolean {
+function detectedRefactoring(entries: SessionEntryLike[]): boolean {
   let editCount = 0;
   for (const entry of entries) {
     if (entry.type !== "message") continue;
@@ -193,7 +194,7 @@ function detectedRefactoring(entries: SessionEntry[]): boolean {
   return editCount >= 3;
 }
 
-function detectedTesting(entries: SessionEntry[]): boolean {
+function detectedTesting(entries: SessionEntryLike[]): boolean {
   for (const entry of entries) {
     if (entry.type !== "message") continue;
     const msg = (entry as any).message;
@@ -210,7 +211,7 @@ function detectedTesting(entries: SessionEntry[]): boolean {
   return false;
 }
 
-function deriveNameAndSummary(entries: SessionEntry[], score: number): { autoName?: string; summary?: string } {
+function deriveNameAndSummary(entries: SessionEntryLike[], score: number): { autoName?: string; summary?: string } {
   const firstUser = entries.find((e) => {
     if (e.type !== "message") return false;
     const msg = (e as any).message;

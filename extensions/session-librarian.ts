@@ -1,4 +1,14 @@
-import { CONFIG_DIR_NAME, type ExtensionAPI, type ExtensionCommandContext, type SessionManager } from "@earendil-works/pi-coding-agent";
+import {
+  CONFIG_DIR_NAME,
+  type ExtensionAPI,
+  type ExtensionCommandContext,
+  type SessionManager,
+  truncateHead,
+  DEFAULT_MAX_BYTES,
+  DEFAULT_MAX_LINES,
+} from "@earendil-works/pi-coding-agent";
+import { complete, type Model } from "@earendil-works/pi-ai";
+import type { Context } from "@earendil-works/pi-ai";
 import { join } from "node:path";
 import { computeScore } from "./lib/scorer.js";
 import { getIndexPath, loadIndex, pruneIndex, updateSession } from "./lib/index.js";
@@ -20,11 +30,12 @@ export default function (pi: ExtensionAPI) {
       ...score,
       bookmark: existing?.bookmark ?? false,
       note: existing?.note,
+      sessionName: existing?.sessionName,
     };
 
-    // Auto-name if none exists
-    const currentName = ctx.sessionManager.getSessionName?.() ?? (ctx as any).pi?.getSessionName?.();
-    if (!currentName && merged.autoName && merged.score > 10) {
+    // Auto-name if none exists and session name isn't already set
+    const currentName = ctx.sessionManager.getSessionName?.();
+    if (!currentName && !merged.sessionName && merged.autoName && merged.score > 10) {
       try {
         pi.setSessionName(merged.autoName);
         merged.sessionName = merged.autoName;
@@ -39,6 +50,16 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerCommand("sessions", {
     description: "Show ranked sessions for current project",
+    getArgumentCompletions: (prefix) => {
+      const candidates = [
+        { value: "top ", label: "top N" },
+        { value: "tagged ", label: "tagged <tag>" },
+        { value: "bookmarked", label: "bookmarked" },
+        { value: "chain ", label: "chain <name>" },
+        { value: "search ", label: "search <query>" },
+      ];
+      return candidates.filter((c) => c.value.startsWith(prefix));
+    },
     handler: async (args, ctx) => {
       const index = loadIndex(ctx.cwd);
       const sessions = Object.entries(index.sessions)
@@ -59,15 +80,23 @@ export default function (pi: ExtensionAPI) {
         const date = new Date(s.scoredAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
         const mark = s.bookmark ? " [bookmarked]" : "";
         const title = s.sessionName || s.autoName || s.summary || "Untitled session";
-        lines.push(`  #${i + 1} ★ ${s.score}${mark} ${date} — ${title}`);
+        lines.push(`  #${i + 1} ★ ${s.score.toString().padStart(2)}${mark} ${date} — ${title.slice(0, 60)}`);
         if (s.tags.length > 0) {
           lines.push(`      Tags: ${s.tags.join(", ")}`);
+        }
+        if (s.note) {
+          lines.push(`      Note: ${s.note.slice(0, 80)}${s.note.length > 80 ? "…" : ""}`);
         }
         lines.push(`      ${describeMetrics(s)}`);
         lines.push("");
       }
 
-      ctx.ui.notify(lines.join("\n"), "info");
+      const text = lines.join("\n");
+      if (ctx.hasUI) {
+        ctx.ui.notify(text, "info");
+      } else {
+        console.log(text);
+      }
     },
   });
 
@@ -125,16 +154,61 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("score", {
-    description: "Show current heuristic score for this session",
-    handler: async (_args, ctx) => {
+    description: "Show or recompute LLM score for this session",
+    getArgumentCompletions: (prefix) => {
+      const candidates = [
+        { value: "heuristic", label: "heuristic" },
+        { value: "llm", label: "llm" },
+        { value: "rescore", label: "rescore" },
+      ];
+      return candidates.filter((c) => c.value.startsWith(prefix));
+    },
+    handler: async (args, ctx) => {
+      const mode = (args ?? "").trim().toLowerCase();
       const entries = ctx.sessionManager.getEntries();
-      const s = computeScore(entries as any);
-      ctx.ui.notify(`Current session score: ${s.score}\nTags: ${s.tags.join(", ") || "none"}\n${describeMetrics(s)}`, "info");
+
+      if (mode === "heuristic" || !mode) {
+        const s = computeScore(entries as any);
+        ctx.ui.notify(`Heuristic score: ${s.score}\nTags: ${s.tags.join(", ") || "none"}\n${describeMetrics(s)}`, "info");
+        return;
+      }
+
+      if (mode === "llm" || mode === "rescore") {
+        const model = await pickModel(ctx);
+        if (!model) {
+          ctx.ui.notify("No model available with an API key. Set one in pi settings or environment.", "error");
+          return;
+        }
+
+        ctx.ui.notify("LLM scoring session…", "info");
+        try {
+          const scored = await llmScore(entries, model, ctx.modelRegistry, ctx.signal);
+          const updated = updateSession(ctx.cwd, ctx.sessionManager.getSessionId()!, {
+            ...scored,
+            scoredAt: new Date().toISOString(),
+          });
+          const s = updated.sessions[ctx.sessionManager.getSessionId()!];
+          ctx.ui.notify(`LLM score: ${s.score}\nTags: ${s.tags.join(", ") || "none"}\nSummary: ${s.summary || "none"}`, "info");
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          ctx.ui.notify(`LLM scoring failed: ${msg}`, "error");
+        }
+        return;
+      }
+
+      ctx.ui.notify("Usage: /score [heuristic|llm|rescore]", "error");
     },
   });
 
   pi.registerCommand("chain", {
     description: "Add current session to a named chain",
+    getArgumentCompletions: (prefix, ctx) => {
+      const index = loadIndex(ctx.cwd);
+      const chains = Object.keys(index.chains);
+      return chains
+        .filter((c) => c.startsWith(prefix))
+        .map((c) => ({ value: c, label: `${c} (${index.chains[c].sessionIds.length} sessions)` }));
+    },
     handler: async (args, ctx) => {
       const name = args?.trim();
       if (!name) {
@@ -251,10 +325,137 @@ function applyFilter(
           (s.sessionName?.toLowerCase().includes(q) || false) ||
           (s.autoName?.toLowerCase().includes(q) || false) ||
           (s.summary?.toLowerCase().includes(q) || false) ||
+          (s.note?.toLowerCase().includes(q) || false) ||
           s.tags.some((t) => t.toLowerCase().includes(q))
         );
       });
     default:
       return out;
   }
+}
+
+async function pickModel(ctx: ExtensionCommandContext): Promise<Model<any> | undefined> {
+  if (ctx.model) {
+    const auth = await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model);
+    if (auth.ok && auth.apiKey) return ctx.model;
+  }
+  const available = await ctx.modelRegistry.getAvailable();
+  if (available.length === 0) return undefined;
+  // Prefer cheaper/faster models for scoring
+  const preferred = available.find((m) => m.id.includes("flash") || m.id.includes("mini"));
+  return preferred ?? available[0];
+}
+
+async function llmScore(
+  entries: any[],
+  model: Model<any>,
+  modelRegistry: any,
+  signal?: AbortSignal,
+): Promise<Partial<SessionScore>> {
+  const auth = await modelRegistry.getApiKeyAndHeaders(model);
+  if (!auth.ok || !auth.apiKey) {
+    throw new Error(`No API key for ${model.provider}/${model.id}`);
+  }
+
+  const serialized = serializeEntries(entries);
+  const prompt = `Analyze this coding session and respond ONLY with a JSON object in this exact shape (no markdown, no code fences):
+{
+  "score": <number 0-100>,
+  "tags": ["<tag>", "<tag>", ...],
+  "summary": "<one-line summary>",
+  "accomplishments": ["<bullet>", ...],
+  "largerEffort": "<chain name or null>"
+}
+
+Rules:
+- score: overall quality and substance
+- tags: max 5, use lowercase, concrete categories like "architecture", "bugfix", "refactoring", "creation", "testing", "decisions"
+- summary: one line, max 120 chars
+- accomplishments: list of concrete things done
+- largerEffort: name of the chain if this is part of one, else null
+
+<session_entries>
+${serialized}
+</session_entries>`;
+
+  const context: Context = {
+    messages: [{ role: "user", content: prompt, timestamp: Date.now() }],
+  };
+
+  const response = await complete(
+    model,
+    context,
+    {
+      apiKey: auth.apiKey,
+      headers: auth.headers,
+      maxTokens: 2000,
+      signal,
+    },
+  );
+
+  const text = response.content
+    .filter((c) => c.type === "text")
+    .map((c) => (c as any).text)
+    .join("\n")
+    .trim();
+
+  const parsed = parseLlmJson(text);
+  const heuristics = computeScore(entries);
+
+  return {
+    score: clamp(parsed.score ?? heuristics.score, 0, 100),
+    tags: parsed.tags?.slice(0, 5) ?? heuristics.tags,
+    summary: parsed.summary ?? heuristics.summary,
+    metrics: heuristics.metrics,
+    hotFiles: heuristics.hotFiles,
+    autoName: heuristics.autoName,
+  };
+}
+
+function serializeEntries(entries: any[]): string {
+  const lines: string[] = [];
+  for (const entry of entries) {
+    if (entry.type === "message") {
+      const msg = entry.message;
+      const text = typeof msg.content === "string" ? msg.content : msg.content?.map((c: any) => c.text || c.name || "").join(" ");
+      lines.push(`[${msg.role}] ${text.slice(0, 500)}`);
+    } else if (entry.type === "compaction") {
+      lines.push(`[compaction] ${entry.summary?.slice(0, 300) || ""}`);
+    } else if (entry.type === "branch_summary") {
+      lines.push(`[branch] ${entry.summary?.slice(0, 300) || ""}`);
+    } else if (entry.type === "custom") {
+      lines.push(`[custom ${entry.customType}] ${JSON.stringify(entry.data).slice(0, 300)}`);
+    } else if (entry.type === "custom_message") {
+      lines.push(`[custom_message ${entry.customType}] ${entry.content?.slice(0, 300) || ""}`);
+    } else if (entry.type === "label") {
+      lines.push(`[label] ${entry.label}`);
+    } else if (entry.type === "session_info") {
+      lines.push(`[session_name] ${entry.name}`);
+    }
+  }
+
+  // Truncate to keep LLM context manageable
+  const joined = lines.join("\n");
+  const trunc = truncateHead(joined, { maxLines: DEFAULT_MAX_LINES, maxBytes: DEFAULT_MAX_BYTES });
+  return trunc.content;
+}
+
+function parseLlmJson(text: string): any {
+  const cleaned = text.replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/i, "").trim();
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    // Try to extract first JSON object
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (match) {
+      try {
+        return JSON.parse(match[0]);
+      } catch {}
+    }
+    return {};
+  }
+}
+
+function clamp(n: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, Math.round(n)));
 }
