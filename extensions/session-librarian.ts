@@ -3,14 +3,12 @@ import {
   type ExtensionAPI,
   type ExtensionCommandContext,
   type SessionManager,
-  truncateHead,
-  DEFAULT_MAX_BYTES,
-  DEFAULT_MAX_LINES,
 } from "@earendil-works/pi-coding-agent";
 import { complete, type Model } from "@earendil-works/pi-ai";
 import type { Context } from "@earendil-works/pi-ai";
 import { join } from "node:path";
 import { computeScore } from "./lib/scorer.js";
+import { serializeForLlm } from "./lib/llm.js";
 import { getIndexPath, loadIndex, pruneIndex, updateSession } from "./lib/index.js";
 import type { SessionIndex, SessionScore } from "./lib/types.js";
 
@@ -357,7 +355,7 @@ async function llmScore(
     throw new Error(`No API key for ${model.provider}/${model.id}`);
   }
 
-  const serialized = serializeEntries(entries);
+  const serialized = serializeForLlm(entries);
   const prompt = `Analyze this coding session and respond ONLY with a JSON object in this exact shape (no markdown, no code fences):
 {
   "score": <number 0-100>,
@@ -412,33 +410,7 @@ ${serialized}
   };
 }
 
-function serializeEntries(entries: any[]): string {
-  const lines: string[] = [];
-  for (const entry of entries) {
-    if (entry.type === "message") {
-      const msg = entry.message;
-      const text = typeof msg.content === "string" ? msg.content : msg.content?.map((c: any) => c.text || c.name || "").join(" ");
-      lines.push(`[${msg.role}] ${text.slice(0, 500)}`);
-    } else if (entry.type === "compaction") {
-      lines.push(`[compaction] ${entry.summary?.slice(0, 300) || ""}`);
-    } else if (entry.type === "branch_summary") {
-      lines.push(`[branch] ${entry.summary?.slice(0, 300) || ""}`);
-    } else if (entry.type === "custom") {
-      lines.push(`[custom ${entry.customType}] ${JSON.stringify(entry.data).slice(0, 300)}`);
-    } else if (entry.type === "custom_message") {
-      lines.push(`[custom_message ${entry.customType}] ${entry.content?.slice(0, 300) || ""}`);
-    } else if (entry.type === "label") {
-      lines.push(`[label] ${entry.label}`);
-    } else if (entry.type === "session_info") {
-      lines.push(`[session_name] ${entry.name}`);
-    }
-  }
 
-  // Truncate to keep LLM context manageable
-  const joined = lines.join("\n");
-  const trunc = truncateHead(joined, { maxLines: DEFAULT_MAX_LINES, maxBytes: DEFAULT_MAX_BYTES });
-  return trunc.content;
-}
 
 function parseLlmJson(text: string): any {
   const cleaned = text.replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/i, "").trim();
