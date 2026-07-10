@@ -7,30 +7,30 @@ export function computeScore(entries: SessionEntryLike[]): SessionScore {
   const tags = new Set<string>();
   let score = 0;
 
-  // Decisions
-  score += metrics.decisions * 15;
+  // Decisions (diminishing returns)
+  score += diminishing(metrics.decisions, 10, 0.6);
   if (metrics.decisions > 0) tags.add("decisions");
 
-  // Bugfixes
-  score += metrics.bugfixes * 12;
+  // Bugfixes (low weight for keyword-based, higher for explicit entries)
+  score += diminishing(metrics.bugfixes, 8, 0.5);
   if (metrics.bugfixes > 0) tags.add("bugfix");
 
   // Architecture
-  score += metrics.architecture * 10;
+  score += diminishing(metrics.architecture, 8, 0.5);
   if (metrics.architecture > 0) tags.add("architecture");
 
-  // Files touched
-  score += metrics.filesChanged * 2;
+  // Files touched (cap at 15)
+  score += Math.min(metrics.filesChanged, 15) * 1.5;
   if (metrics.filesChanged > 0) tags.add("files");
 
-  // Tool calls
-  score += metrics.toolCalls * 0.5;
+  // Tool calls (cap at 30)
+  score += Math.min(metrics.toolCalls, 30) * 0.4;
 
-  // Duration
-  score += metrics.durationMinutes * 0.1;
+  // Duration (cap at 120 minutes)
+  score += Math.min(metrics.durationMinutes, 120) * 0.08;
 
-  // Messages
-  score += metrics.messageCount * 0.2;
+  // Messages (cap at 100)
+  score += Math.min(metrics.messageCount, 100) * 0.15;
 
   // Compaction bonus
   const hasCompaction = entries.some((e) => e.type === "compaction");
@@ -69,6 +69,16 @@ export function computeScore(entries: SessionEntryLike[]): SessionScore {
   };
 }
 
+function diminishing(count: number, base: number, factor: number): number {
+  let total = 0;
+  let weight = base;
+  for (let i = 0; i < count; i++) {
+    total += weight;
+    weight *= factor;
+  }
+  return total;
+}
+
 function computeMetrics(entries: SessionEntryLike[]): SessionMetrics {
   const metrics: SessionMetrics = {
     decisions: 0,
@@ -88,6 +98,8 @@ function computeMetrics(entries: SessionEntryLike[]): SessionMetrics {
     metrics.durationMinutes = Math.max(0, Math.round((lastTs - firstTs) / 60000));
   }
 
+  let keywordBugfixes = 0;
+
   for (const entry of entries) {
     if (entry.type === "message") {
       const msg = (entry as any).message;
@@ -98,12 +110,10 @@ function computeMetrics(entries: SessionEntryLike[]): SessionMetrics {
       }
       if (msg?.role === "assistant" && typeof msg.content === "string") {
         const lower = msg.content.toLowerCase();
-        if (lower.includes("fix") || lower.includes("bug") || lower.includes("resolved")) {
-          metrics.bugfixes += 1;
+        // Only keyword bugfix if explicit action language
+        if (/\b(fix|fixed|bug|resolved)\b/i.test(lower) && /\b(the|a|issue|bug|problem|error)\b/i.test(lower)) {
+          keywordBugfixes += 1;
         }
-      }
-      if (msg?.role === "user" && typeof msg.content === "string") {
-        // user intent signals
       }
     }
 
@@ -124,6 +134,11 @@ function computeMetrics(entries: SessionEntryLike[]): SessionMetrics {
     if (entry.type === "branch_summary") {
       metrics.branchingFactor += 1;
     }
+  }
+
+  // Keyword bugfixes count at most 1, and only if no explicit bugfix entries
+  if (metrics.bugfixes === 0 && keywordBugfixes > 0) {
+    metrics.bugfixes = 1;
   }
 
   for (const file of extractFiles(entries)) {

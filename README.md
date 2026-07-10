@@ -5,8 +5,10 @@ A [pi](https://pi.dev) package that ranks, bookmarks, and organizes your coding 
 ## Features
 
 - **Heuristic scoring** on `session_shutdown` — every session gets a quality score 0-100.
+- **LLM scoring** — `/score llm` scores the current session with the configured pi model.
 - **Auto-naming** — unnamed sessions are labeled from their first user message.
 - **Bookmarks** — pin sessions with `/bookmark [note]` and `/unbookmark`.
+- **Rename** — `/rename <name>` sets the session display name.
 - **Ranked list** — `/sessions` shows your best sessions first.
 - **Filters** — `/sessions top 10`, `/sessions tagged architecture`, `/sessions bookmarked`, `/sessions chain <name>`, `/sessions search <query>`.
 - **Hot files** — `/hotfiles` lists files touched across sessions.
@@ -30,12 +32,18 @@ pi install git:github.com/ktappdev/pi-session-librarian
 Commands are available in any pi session:
 
 - `/sessions` — ranked sessions for the current project
+- `/sessions top 10` — top 10 sessions
+- `/sessions tagged architecture` — filter by tag
+- `/sessions bookmarked` — only bookmarked
+- `/sessions search <query>` — search names, summaries, tags, notes
 - `/bookmark [note]` — bookmark the current session
 - `/unbookmark` — remove bookmark
+- `/rename <name>` — set the session display name
 - `/hotfiles` — most-touched files across sessions
 - `/chain <name>` — add current session to a chain
 - `/chains` — list chains
-- `/score` — show current session's heuristic score
+- `/score` or `/score heuristic` — show heuristic score
+- `/score llm` — re-score with the configured pi model
 
 ## Index file
 

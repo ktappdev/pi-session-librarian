@@ -9,7 +9,7 @@ import type { Context } from "@earendil-works/pi-ai";
 import { join } from "node:path";
 import { computeScore } from "./lib/scorer.js";
 import { serializeForLlm } from "./lib/llm.js";
-import { getIndexPath, loadIndex, pruneIndex, updateSession } from "./lib/index.js";
+import { getIndexPath, loadIndex, pruneIndex, saveIndex, updateSession } from "./lib/index.js";
 import type { SessionIndex, SessionScore } from "./lib/types.js";
 
 export default function (pi: ExtensionAPI) {
@@ -68,7 +68,8 @@ export default function (pi: ExtensionAPI) {
       const filtered = applyFilter(sessions, filter, index);
 
       if (filtered.length === 0) {
-        ctx.ui.notify("No sessions found.", "info");
+        const q = filter.kind === "search" ? ` matching "${filter.value}"` : "";
+        ctx.ui.notify(`No sessions found${q}.`, "info");
         return;
       }
 
@@ -78,23 +79,19 @@ export default function (pi: ExtensionAPI) {
         const date = new Date(s.scoredAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
         const mark = s.bookmark ? " [bookmarked]" : "";
         const title = s.sessionName || s.autoName || s.summary || "Untitled session";
-        lines.push(`  #${i + 1} ★ ${s.score.toString().padStart(2)}${mark} ${date} — ${title.slice(0, 60)}`);
+        const shortId = s.id.slice(0, 8);
+        lines.push(`  #${i + 1} ★ ${s.score.toString().padStart(2)}${mark} ${date} — ${title.slice(0, 50)}`);
+        lines.push(`      id:${shortId}  ${describeMetrics(s)}`);
         if (s.tags.length > 0) {
           lines.push(`      Tags: ${s.tags.join(", ")}`);
         }
         if (s.note) {
           lines.push(`      Note: ${s.note.slice(0, 80)}${s.note.length > 80 ? "…" : ""}`);
         }
-        lines.push(`      ${describeMetrics(s)}`);
         lines.push("");
       }
 
-      const text = lines.join("\n");
-      if (ctx.hasUI) {
-        ctx.ui.notify(text, "info");
-      } else {
-        console.log(text);
-      }
+      ctx.ui.notify(lines.join("\n"), "info");
     },
   });
 
@@ -200,8 +197,8 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerCommand("chain", {
     description: "Add current session to a named chain",
-    getArgumentCompletions: (prefix, ctx) => {
-      const index = loadIndex(ctx.cwd);
+    getArgumentCompletions: (prefix) => {
+      const index = loadIndex(process.cwd());
       const chains = Object.keys(index.chains);
       return chains
         .filter((c) => c.startsWith(prefix))
@@ -228,8 +225,30 @@ export default function (pi: ExtensionAPI) {
       if (!index.chains[name].sessionIds.includes(sessionId)) {
         index.chains[name].sessionIds.push(sessionId);
       }
-      updateSession(cwd, sessionId, {}); // ensure index write
+      saveIndex(cwd, index);
       ctx.ui.notify(`Added to chain "${name}" (${index.chains[name].sessionIds.length} sessions).`, "info");
+    },
+  });
+
+  pi.registerCommand("rename", {
+    description: "Rename the current session",
+    handler: async (args, ctx) => {
+      const name = args?.trim();
+      if (!name) {
+        ctx.ui.notify("Usage: /rename <name>", "error");
+        return;
+      }
+      const sessionId = ctx.sessionManager.getSessionId();
+      const cwd = ctx.cwd;
+      if (!sessionId) {
+        ctx.ui.notify("No session ID found.", "error");
+        return;
+      }
+      try {
+        pi.setSessionName(name);
+      } catch {}
+      updateSession(cwd, sessionId, { sessionName: name, autoName: name });
+      ctx.ui.notify(`Session renamed to "${name}".`, "info");
     },
   });
 
@@ -365,9 +384,16 @@ async function llmScore(
   "largerEffort": "<chain name or null>"
 }
 
+Rubric:
+- 0-20: trivial / exploratory / throwaway
+- 20-40: light work, few files, short duration
+- 40-60: moderate session with clear progress
+- 60-80: substantial work, decisions, multiple files
+- 80-100: exceptional, architectural, deeply productive
+
 Rules:
-- score: overall quality and substance
-- tags: max 5, use lowercase, concrete categories like "architecture", "bugfix", "refactoring", "creation", "testing", "decisions"
+- score: overall quality and substance using the rubric
+- tags: max 5, lowercase, concrete categories like "architecture", "bugfix", "refactoring", "creation", "testing", "decisions"
 - summary: one line, max 120 chars
 - accomplishments: list of concrete things done
 - largerEffort: name of the chain if this is part of one, else null
@@ -400,14 +426,34 @@ ${serialized}
   const parsed = parseLlmJson(text);
   const heuristics = computeScore(entries);
 
+  if (!isLlmScore(parsed)) {
+    throw new Error("LLM returned invalid score format");
+  }
+
   return {
-    score: clamp(parsed.score ?? heuristics.score, 0, 100),
+    score: clamp(parsed.score, 0, 100),
     tags: parsed.tags?.slice(0, 5) ?? heuristics.tags,
     summary: parsed.summary ?? heuristics.summary,
     metrics: heuristics.metrics,
     hotFiles: heuristics.hotFiles,
     autoName: heuristics.autoName,
   };
+}
+
+interface LlmScore {
+  score: number;
+  tags?: string[];
+  summary?: string;
+  accomplishments?: string[];
+  largerEffort?: string | null;
+}
+
+function isLlmScore(value: unknown): value is LlmScore {
+  if (!value || typeof value !== "object") return false;
+  const v = value as any;
+  if (typeof v.score !== "number") return false;
+  if (v.tags && !Array.isArray(v.tags)) return false;
+  return true;
 }
 
 
