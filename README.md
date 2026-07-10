@@ -27,6 +27,26 @@ Or from git:
 pi install git:github.com/ktappdev/pi-session-librarian
 ```
 
+## Getting Started
+
+Start pi and work normally. When you quit, each session is scored automatically.
+
+```
+/bookmark "fixed login bug"     → bookmark current session
+/score                           → show heuristic score
+/score llm                       → re-score with LLM
+/sessions                        → ranked sessions for this project
+/sessions top 10                 → top 10 best sessions
+/sessions tagged architecture    → filter by tag
+/sessions search auth            → search names, summaries, tags
+/rename "auth refactor"          → set session display name
+/hotfiles                        → most-touched files across all sessions
+/chain my-feature                → group sessions into a named chain
+/chains                          → list all chains
+```
+
+All data is stored in `.pi/session-index.json` — portable and commit-safe.
+
 ## Usage
 
 Commands are available in any pi session:

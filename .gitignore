@@ -1,3 +1,4 @@
 node_modules
 *.tgz
 .pi/session-index.json
+.pi/agent-sessions/
