@@ -1,0 +1,35 @@
+{
+  "name": "pi-session-librarian",
+  "version": "0.1.0",
+  "description": "pi extension for session scoring, bookmarking, and ranking",
+  "keywords": ["pi-package", "pi", "coding-agent", "session", "bookmark", "librarian"],
+  "license": "MIT",
+  "author": "ktappdev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ktappdev/pi-session-librarian.git"
+  },
+  "homepage": "https://github.com/ktappdev/pi-session-librarian",
+  "bugs": {
+    "url": "https://github.com/ktappdev/pi-session-librarian/issues"
+  },
+  "main": "extensions/session-librarian.ts",
+  "files": [
+    "extensions",
+    "README.md"
+  ],
+  "pi": {
+    "extensions": ["./extensions"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-ai": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
