@@ -1,6 +1,6 @@
 {
   "name": "pi-session-librarian",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "pi extension for session scoring, bookmarking, and ranking",
   "keywords": ["pi-package", "pi", "coding-agent", "session", "bookmark", "librarian"],
   "license": "MIT",
@@ -19,7 +19,7 @@
     "README.md"
   ],
   "pi": {
-    "extensions": ["./extensions"]
+    "extensions": ["./extensions/session-librarian.ts"]
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",

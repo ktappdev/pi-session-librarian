@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.2
+
+- Fix package manifest so pi loads only `session-librarian.ts` as the extension entry point.
+
 ## 0.2.1
 
 - Cap LLM scoring context to ~20KB, keep recent tail, prioritize compaction/branch summaries.
