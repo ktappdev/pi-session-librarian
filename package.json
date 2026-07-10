@@ -1,6 +1,6 @@
 {
   "name": "pi-session-librarian",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "pi extension for session scoring, bookmarking, and ranking",
   "keywords": ["pi-package", "pi", "coding-agent", "session", "bookmark", "librarian"],
   "license": "MIT",
